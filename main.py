@@ -12,7 +12,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI(title="UBS Global Coding Challenge Solver")
-mcp = FastMCP("solver-bot", app)
+mcp = FastMCP.from_fastapi(app=app)
+# mcp = FastMCP("solver-bot", app)
 
 PRIORITY_MAP = {
     "LOW": 1,
