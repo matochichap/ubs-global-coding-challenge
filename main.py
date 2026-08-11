@@ -12,8 +12,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI(title="UBS Global Coding Challenge Solver")
-mcp = FastMCP.from_fastapi(app=app)
-# mcp = FastMCP("solver-bot", app)
+mcp = FastMCP("solver-bot")
 
 PRIORITY_MAP = {
     "LOW": 1,
@@ -237,3 +236,17 @@ def solve(req: SolveRequest) -> SolveResponse:
 @app.post("/event")
 def event_logger(payload: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "received": True}
+
+
+mcp_app = mcp.http_app(path="/mcp")
+app = FastAPI(
+    title="UBS Global Coding Challenge Solver",
+    routes=[*mcp_app.routes, *app.routes],
+    lifespan=mcp_app.lifespan,
+)
+
+
+if __name__ == "__main__":
+    mcp.run()
+
+
