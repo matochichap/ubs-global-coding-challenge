@@ -7,10 +7,12 @@ import re
 from typing import Any
 
 from fastapi import FastAPI
+from fastmcp import FastMCP
 from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI(title="UBS Global Coding Challenge Solver")
+mcp = FastMCP("solver-bot", app)
 
 PRIORITY_MAP = {
     "LOW": 1,
@@ -32,13 +34,6 @@ class SolveResponse(BaseModel):
 
 class EventPayload(BaseModel):
     payload: dict[str, Any] | None = None
-
-
-class MCPRequest(BaseModel):
-    jsonrpc: str
-    id: Any = None
-    method: str
-    params: dict[str, Any] | None = None
 
 
 def build_adapt_output(adapt_input: dict[str, Any]) -> dict[str, Any]:
@@ -89,15 +84,19 @@ def build_slo_output(decoded: dict[str, Any]) -> dict[str, Any]:
 
 
 def truncate_text(value: str) -> str:
+    """Truncates text to MAX_RESPONSE_CHARS."""
     if len(value) <= MAX_RESPONSE_CHARS:
         return value
     return value[:MAX_RESPONSE_CHARS]
 
 
+@mcp.tool()
 def get_name() -> str:
+    """Returns the child's configured name as a string."""
     return "solver-bot"
 
 
+@mcp.tool()
 def do_arithmetic(expression: str) -> float | int:
     tokens = re.findall(r"\d+(?:\.\d+)?|[+\-*/()]", expression.replace(" ", ""))
     if "".join(tokens) != expression.replace(" ", ""):
@@ -149,7 +148,9 @@ def do_arithmetic(expression: str) -> float | int:
     return result
 
 
+@mcp.tool()
 def identify_shapes(image_base64: str) -> dict[str, Any]:
+    """Identifies shape counts from a base64 PNG image."""
     image_data = base64.b64decode(image_base64)
     image = Image.open(io.BytesIO(image_data)).convert("L")
     pixels = image.load()
@@ -207,14 +208,11 @@ def identify_shapes(image_base64: str) -> dict[str, Any]:
     return counts
 
 
-def mcp_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
-
-
-def mcp_result(req_id: Any, result: Any) -> dict[str, Any]:
-    if isinstance(result, str):
-        result = truncate_text(result)
-    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+def truncate_text(value: str) -> str:
+    """Truncates text to MAX_RESPONSE_CHARS."""
+    if len(value) <= MAX_RESPONSE_CHARS:
+        return value
+    return value[:MAX_RESPONSE_CHARS]
 
 
 @app.get("/")
@@ -238,61 +236,3 @@ def solve(req: SolveRequest) -> SolveResponse:
 @app.post("/event")
 def event_logger(payload: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "received": True}
-
-
-@app.post("/mcp")
-def mcp_endpoint(req: MCPRequest) -> dict[str, Any]:
-    if req.jsonrpc != "2.0":
-        return mcp_error(req.id, -32600, "Invalid Request")
-
-    params = req.params or {}
-
-    if req.method == "tools/list":
-        tools = [
-            {
-                "name": "get_name",
-                "description": "Returns the child's configured name as a string.",
-                "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-            },
-            {
-                "name": "do_arithmetic",
-                "description": "Evaluates basic arithmetic operations (+, -, *, /).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"expression": {"type": "string"}},
-                    "required": ["expression"],
-                    "additionalProperties": False,
-                },
-            },
-            {
-                "name": "identify_shapes",
-                "description": "Identifies shape counts from a base64 PNG image.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"image_base64": {"type": "string"}},
-                    "required": ["image_base64"],
-                    "additionalProperties": False,
-                },
-            },
-        ]
-        return mcp_result(req.id, {"tools": tools})
-
-    if req.method == "tools/call":
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-
-        try:
-            if tool_name == "get_name":
-                output = get_name()
-            elif tool_name == "do_arithmetic":
-                output = do_arithmetic(arguments["expression"])
-            elif tool_name == "identify_shapes":
-                output = identify_shapes(arguments["image_base64"])
-            else:
-                return mcp_error(req.id, -32601, "Tool not found")
-        except Exception as exc:
-            return mcp_error(req.id, -32000, str(exc))
-
-        return mcp_result(req.id, output)
-
-    return mcp_error(req.id, -32601, "Method not found")
