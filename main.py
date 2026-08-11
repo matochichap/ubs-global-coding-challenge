@@ -36,6 +36,25 @@ class EventPayload(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class MoveRequest(BaseModel):
+    round: str
+    your_number: int
+    community_number: int | None
+    pot: int
+    to_call: int
+    min_raise_to: int
+    max_raise_to: int
+    legal_actions: list[str]
+    your_stack: int
+    your_seat: int
+    button_seat: int
+
+
+class MoveResponse(BaseModel):
+    action: str
+    amount: int | None = None
+
+
 def build_adapt_output(adapt_input: dict[str, Any]) -> dict[str, Any]:
     user = adapt_input.get("user", {})
     metadata = adapt_input.get("metadata", {})
@@ -208,6 +227,49 @@ def identify_shapes(image_base64: str) -> dict[str, Any]:
     return counts
 
 
+def get_pre_reveal_action(your_number: int, to_call: int, min_raise_to: int, legal_actions: list[str]) -> tuple[str, int | None]:
+    if your_number >= 11:
+        if to_call == 0 and "raise" in legal_actions:
+            return ("raise", min_raise_to)
+        if to_call <= 10 and "call" in legal_actions:
+            return ("call", None)
+        return ("fold", None)
+    else:
+        if "check" in legal_actions:
+            return ("check", None)
+        return ("fold", None)
+
+
+def get_post_reveal_action(your_number: int, community_number: int | None, to_call: int, max_raise_to: int, legal_actions: list[str]) -> tuple[str, int | None]:
+    if your_number == community_number:
+        if "raise" in legal_actions:
+            return ("raise", max_raise_to)
+        if "bet" in legal_actions:
+            return ("bet", max_raise_to)
+        return ("call", None)
+    
+    if your_number >= 11:
+        if "check" in legal_actions:
+            return ("check", None)
+        if to_call <= 15 and "call" in legal_actions:
+            return ("call", None)
+        return ("fold", None)
+    
+    if "check" in legal_actions:
+        return ("check", None)
+    return ("fold", None)
+
+
+def apply_fallback_chain(action: str, legal_actions: list[str]) -> str:
+    if action in legal_actions:
+        return action
+    if "check" in legal_actions:
+        return "check"
+    if "call" in legal_actions:
+        return "call"
+    return "fold"
+
+
 def truncate_text(value: str) -> str:
     """Truncates text to MAX_RESPONSE_CHARS."""
     if len(value) <= MAX_RESPONSE_CHARS:
@@ -236,3 +298,15 @@ def solve(req: SolveRequest) -> SolveResponse:
 @app.post("/event")
 def event_logger(payload: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "received": True}
+
+
+@app.post("/move", response_model=MoveResponse)
+def move(req: MoveRequest) -> MoveResponse:
+    if req.round == "pre_reveal":
+        action, amount = get_pre_reveal_action(req.your_number, req.to_call, req.min_raise_to, req.legal_actions)
+    else:
+        action, amount = get_post_reveal_action(req.your_number, req.community_number, req.to_call, req.max_raise_to, req.legal_actions)
+    
+    action = apply_fallback_chain(action, req.legal_actions)
+    
+    return MoveResponse(action=action, amount=amount)
