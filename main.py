@@ -283,6 +283,64 @@ def play_standard(req: MoveRequest) -> tuple[str, int | None]:
         return get_post_reveal_action(req.your_number, req.community_number, req.to_call, req.max_raise_to, req.legal_actions)
 
 
+def exploit_standard(req: MoveRequest) -> tuple[str, int | None]:
+    """Exploit Standard: Looser range + positional steals."""
+    if req.round == "pre_reveal":
+        # 11+: Raise or call anything up to 15
+        if req.your_number >= 11:
+            if req.to_call == 0 and "raise" in req.legal_actions:
+                amount = max(req.min_raise_to or 1, 6)
+                return ("raise", amount)
+            if req.to_call <= 15 and "call" in req.legal_actions:
+                return ("call", None)
+            return ("fold", None)
+        
+        # 7-10: Call small bets, check if free
+        if req.your_number >= 7:
+            if req.to_call <= 5 and "call" in req.legal_actions:
+                return ("call", None)
+            if "check" in req.legal_actions:
+                return ("check", None)
+            return ("fold", None)
+        
+        # ≤6: Check if free, fold if bet
+        if "check" in req.legal_actions:
+            return ("check", None)
+        return ("fold", None)
+    else:
+        # Post-reveal
+        # Pair: All-in
+        if req.your_number == req.community_number:
+            if "raise" in req.legal_actions:
+                return ("raise", req.max_raise_to)
+            if "bet" in req.legal_actions:
+                return ("bet", req.max_raise_to)
+            return ("call", None)
+        
+        # Positional Steal: Act last (your_seat != button_seat) with no pair and free hand
+        if (req.your_number < 11 and req.to_call == 0 and 
+            req.your_seat != req.button_seat):
+            if "raise" in req.legal_actions:
+                amount = max(req.min_raise_to or 1, 10)
+                return ("raise", amount)
+            if "bet" in req.legal_actions:
+                amount = max(req.min_raise_to or 1, 10)
+                return ("bet", amount)
+        
+        # High Card (10-13): Call moderate bets
+        if req.your_number >= 10:
+            if "check" in req.legal_actions:
+                return ("check", None)
+            if req.to_call <= 20 and "call" in req.legal_actions:
+                return ("call", None)
+            return ("fold", None)
+        
+        # Miss: Check or fold
+        if "check" in req.legal_actions:
+            return ("check", None)
+        return ("fold", None)
+
+
 def play_low_ball(req: MoveRequest) -> tuple[str, int | None]:
     """Low Ball: lower numbers win, pairs are death traps."""
     if req.round == "pre_reveal":
@@ -416,6 +474,53 @@ def play_pair_bounty(req: MoveRequest) -> tuple[str, int | None]:
         return ("fold", None)
 
 
+def exploit_pair_bounty(req: MoveRequest) -> tuple[str, int | None]:
+    """Exploit Pair Bounty: Trap maniac's bluffs by calling, never raising pairs."""
+    if req.round == "pre_reveal":
+        # 8+: Catch bluffs by calling large bets (up to 25)
+        if req.your_number >= 8:
+            if req.to_call <= 25 and "call" in req.legal_actions:
+                return ("call", None)
+            if "check" in req.legal_actions:
+                return ("check", None)
+            return ("fold", None)
+        
+        # ≤7: Check if free, fold if bet
+        if "check" in req.legal_actions:
+            return ("check", None)
+        return ("fold", None)
+    else:
+        # Post-reveal
+        # Pair: THE TRAP - never raise, check to induce bluff or call it
+        if req.your_number == req.community_number:
+            # If free, check to induce their bluff
+            if req.to_call == 0 and "check" in req.legal_actions:
+                return ("check", None)
+            # If they bet, call it (snap off bluff)
+            if "call" in req.legal_actions:
+                return ("call", None)
+            return ("fold", None)
+        
+        # High Card (11-13): Hero call their massive bluffs (up to 50 chips or all-in)
+        if req.your_number >= 11:
+            # Check if free
+            if req.to_call == 0 and "check" in req.legal_actions:
+                return ("check", None)
+            # Call even large bets up to 50 chips
+            if req.to_call <= 50 and "call" in req.legal_actions:
+                return ("call", None)
+            # If bet is all-in or huge, still call (trap)
+            if "call" in req.legal_actions and req.to_call >= req.your_stack * 0.5:
+                return ("call", None)
+            # Otherwise fold to huge bets
+            return ("fold", None)
+        
+        # Miss: Check or fold
+        if "check" in req.legal_actions:
+            return ("check", None)
+        return ("fold", None)
+
+
 def validate_action(action: str, amount: int | None, req: MoveRequest) -> tuple[str, int | None]:
     """Validate action legality and enforce boundaries."""
     # Check legality
@@ -438,13 +543,13 @@ def validate_action(action: str, amount: int | None, req: MoveRequest) -> tuple[
 def calculate_move(req: MoveRequest) -> tuple[str, int | None]:
     """Route to appropriate brain based on table_rule."""
     if req.table_rule == "standard":
-        return play_standard(req)
+        return exploit_standard(req)
     elif req.table_rule == "low_ball":
         return play_low_ball(req)
     elif req.table_rule == "wild_seven":
         return play_wild_seven(req)
     elif req.table_rule == "pair_bounty":
-        return play_pair_bounty(req)
+        return exploit_pair_bounty(req)
     else:
         # Safe fallback
         if "check" in req.legal_actions:
